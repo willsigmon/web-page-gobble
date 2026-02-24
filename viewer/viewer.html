@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Web Page Gobble — Results</title>
+  <link rel="stylesheet" href="viewer.css">
+</head>
+<body>
+  <div class="app">
+    <!-- Top Bar -->
+    <header class="topbar">
+      <div class="topbar-left">
+        <svg width="24" height="24" viewBox="0 0 28 28" fill="none">
+          <ellipse cx="14" cy="16" rx="8" ry="9" fill="#8B4513"/>
+          <circle cx="14" cy="9" r="4" fill="#D2691E"/>
+          <path d="M6 10 Q3 6 6 3 Q8 5 8 8" fill="#D4762C"/>
+          <path d="M22 10 Q25 6 22 3 Q20 5 20 8" fill="#D4762C"/>
+          <path d="M8 6 Q5 2 8 0 Q10 3 9 6" fill="#C0392B"/>
+          <path d="M20 6 Q23 2 20 0 Q18 3 19 6" fill="#C0392B"/>
+        </svg>
+        <h1>Web Page Gobble</h1>
+      </div>
+      <div class="topbar-actions">
+        <button id="btn-download-all" class="btn btn-primary">Download All</button>
+        <button id="btn-copy-text" class="btn btn-secondary">Copy OCR Text</button>
+        <button id="btn-copy-metadata" class="btn btn-secondary">Copy Metadata</button>
+      </div>
+    </header>
+
+    <!-- Status Bar -->
+    <div class="status-bar" id="status-bar">
+      <div class="status-text" id="status-text">Processing capture...</div>
+      <div class="progress-track">
+        <div class="progress-fill" id="progress-fill"></div>
+      </div>
+    </div>
+
+    <!-- Main Content -->
+    <div class="main">
+      <!-- Left: Image sections -->
+      <div class="panel panel-images" id="panel-images">
+        <h2>Captured Sections</h2>
+        <div class="sections-grid" id="sections-grid">
+          <!-- Filled dynamically -->
+        </div>
+      </div>
+
+      <!-- Right: Metadata + OCR -->
+      <div class="panel panel-data">
+        <div class="tabs">
+          <button class="tab active" data-tab="metadata">Page Info</button>
+          <button class="tab" data-tab="ocr">OCR Text</button>
+          <button class="tab" data-tab="json">Raw JSON</button>
+        </div>
+
+        <div class="tab-content active" id="tab-metadata">
+          <div class="meta-grid" id="meta-grid">
+            <!-- Filled dynamically -->
+          </div>
+        </div>
+
+        <div class="tab-content" id="tab-ocr">
+          <pre id="ocr-text" class="ocr-text">Waiting for OCR...</pre>
+        </div>
+
+        <div class="tab-content" id="tab-json">
+          <pre id="json-output" class="json-output"></pre>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="../lib/image-processor.js"></script>
+  <script src="../lib/ocr-engine.js"></script>
+  <script src="viewer.js"></script>
+</body>
+</html>

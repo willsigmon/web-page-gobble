@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html>
+<head><title>Icon Generator</title></head>
+<body>
+<p>Open this file in a browser, right-click each canvas, and "Save image as" to create the PNG icons.</p>
+<div id="icons"></div>
+<script>
+const sizes = [16, 48, 128];
+
+sizes.forEach(size => {
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+
+  const s = size;
+  const pad = s * 0.08;
+  const r = s * 0.15;
+
+  // Background rounded rect
+  ctx.beginPath();
+  roundRect(ctx, pad, pad, s - pad * 2, s - pad * 2, r);
+  const grad = ctx.createLinearGradient(0, 0, s, s);
+  grad.addColorStop(0, '#6c63ff');
+  grad.addColorStop(1, '#4a3fcf');
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // Camera body (white rounded rect)
+  const cx = s * 0.2, cy = s * 0.3, cw = s * 0.6, ch = s * 0.45;
+  ctx.beginPath();
+  roundRect(ctx, cx, cy, cw, ch, s * 0.06);
+  ctx.fillStyle = 'rgba(255,255,255,0.95)';
+  ctx.fill();
+
+  // Lens circle
+  ctx.beginPath();
+  ctx.arc(s * 0.5, s * 0.52, s * 0.12, 0, Math.PI * 2);
+  ctx.fillStyle = '#6c63ff';
+  ctx.fill();
+
+  // Inner lens
+  ctx.beginPath();
+  ctx.arc(s * 0.5, s * 0.52, s * 0.06, 0, Math.PI * 2);
+  ctx.fillStyle = '#3d35b0';
+  ctx.fill();
+
+  // Flash nub
+  ctx.beginPath();
+  roundRect(ctx, s * 0.35, cy - s * 0.06, s * 0.15, s * 0.08, s * 0.03);
+  ctx.fillStyle = 'rgba(255,255,255,0.95)';
+  ctx.fill();
+
+  // Scroll indicator (3 horizontal lines at bottom)
+  const lineY = s * 0.82;
+  ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+  ctx.lineWidth = Math.max(1, s * 0.02);
+  ctx.lineCap = 'round';
+  for (let i = 0; i < 3; i++) {
+    const y = lineY + i * s * 0.04;
+    const w = s * (0.3 - i * 0.05);
+    ctx.beginPath();
+    ctx.moveTo((s - w) / 2, y);
+    ctx.lineTo((s + w) / 2, y);
+    ctx.stroke();
+  }
+
+  const container = document.getElementById('icons');
+  const label = document.createElement('div');
+  label.textContent = `icon${size}.png`;
+  label.style.marginTop = '12px';
+  container.appendChild(label);
+  canvas.style.border = '1px solid #333';
+  canvas.style.imageRendering = 'pixelated';
+  canvas.style.width = `${Math.max(size, 64)}px`;
+  canvas.style.height = `${Math.max(size, 64)}px`;
+  container.appendChild(canvas);
+
+  // Auto-download
+  const link = document.createElement('a');
+  link.download = `icon${size}.png`;
+  link.href = canvas.toDataURL('image/png');
+  link.textContent = ` [download]`;
+  label.appendChild(link);
+});
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+}
+</script>
+</body>
+</html>
