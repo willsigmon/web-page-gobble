@@ -11,18 +11,25 @@
     <!-- Top Bar -->
     <header class="topbar">
       <div class="topbar-left">
-        <svg width="24" height="24" viewBox="0 0 28 28" fill="none">
-          <ellipse cx="14" cy="16" rx="8" ry="9" fill="#8B4513"/>
-          <circle cx="14" cy="9" r="4" fill="#D2691E"/>
-          <path d="M6 10 Q3 6 6 3 Q8 5 8 8" fill="#D4762C"/>
-          <path d="M22 10 Q25 6 22 3 Q20 5 20 8" fill="#D4762C"/>
-          <path d="M8 6 Q5 2 8 0 Q10 3 9 6" fill="#C0392B"/>
-          <path d="M20 6 Q23 2 20 0 Q18 3 19 6" fill="#C0392B"/>
+        <svg width="28" height="28" viewBox="0 0 32 32" fill="none">
+          <path d="M16 4 Q10 1 7 6 Q10 6 12 10" fill="#C0392B"/>
+          <path d="M16 4 Q22 1 25 6 Q22 6 20 10" fill="#C0392B"/>
+          <path d="M16 3 Q8 2 6 8 Q10 7 13 10" fill="#D4762C"/>
+          <path d="M16 3 Q24 2 26 8 Q22 7 19 10" fill="#D4762C"/>
+          <path d="M16 2 Q12 3 10 8 Q13 7 15 10" fill="#E8A849"/>
+          <path d="M16 2 Q20 3 22 8 Q19 7 17 10" fill="#E8A849"/>
+          <ellipse cx="16" cy="18" rx="7" ry="8" fill="#8B4513"/>
+          <ellipse cx="16" cy="17" rx="5.5" ry="6" fill="#A0522D"/>
+          <circle cx="16" cy="11" r="3.5" fill="#D2691E"/>
+          <path d="M15 12.5 L16 14 L17 12.5" fill="#E8A849"/>
+          <path d="M16 14 Q16.5 15.5 16 16.5" stroke="#C0392B" stroke-width="1.2" stroke-linecap="round" fill="none"/>
+          <circle cx="14.5" cy="10.5" r="0.8" fill="#1a1008"/>
+          <circle cx="17.5" cy="10.5" r="0.8" fill="#1a1008"/>
         </svg>
         <h1>Web Page Gobble</h1>
       </div>
       <div class="topbar-actions">
-        <button id="btn-download-all" class="btn btn-primary">Download All</button>
+        <button id="btn-download-all" class="btn btn-primary">Download ZIP</button>
         <button id="btn-copy-text" class="btn btn-secondary">Copy OCR Text</button>
         <button id="btn-copy-metadata" class="btn btn-secondary">Copy Metadata</button>
       </div>
@@ -30,7 +37,7 @@
 
     <!-- Status Bar -->
     <div class="status-bar" id="status-bar">
-      <div class="status-text" id="status-text">Processing capture...</div>
+      <div class="status-text" id="status-text">Gobbling page data...</div>
       <div class="progress-track">
         <div class="progress-fill" id="progress-fill"></div>
       </div>

@@ -1,7 +1,115 @@
 /**
  * Web Page Gobble — Viewer Page Controller
- * Processes the captured data: stitch → compress → section → OCR → display.
+ * Processes the captured data: stitch -> compress -> section -> OCR -> display.
  */
+
+// ── Lightweight ZIP Builder (no external deps) ─────────────────────────────
+
+const ZipBuilder = (() => {
+  function createZip(files) {
+    // files: [{ name: string, data: Uint8Array }]
+    const localHeaders = [];
+    const centralEntries = [];
+    let offset = 0;
+
+    for (const file of files) {
+      const nameBytes = new TextEncoder().encode(file.name);
+      const crc = crc32(file.data);
+
+      // Local file header (30 bytes + name + data)
+      const local = new Uint8Array(30 + nameBytes.length + file.data.length);
+      const lv = new DataView(local.buffer);
+      lv.setUint32(0, 0x04034b50, true);  // signature
+      lv.setUint16(4, 20, true);            // version needed
+      lv.setUint16(6, 0, true);             // flags
+      lv.setUint16(8, 0, true);             // compression: store
+      lv.setUint16(10, 0, true);            // mod time
+      lv.setUint16(12, 0, true);            // mod date
+      lv.setUint32(14, crc, true);          // crc-32
+      lv.setUint32(18, file.data.length, true); // compressed size
+      lv.setUint32(22, file.data.length, true); // uncompressed size
+      lv.setUint16(26, nameBytes.length, true); // name length
+      lv.setUint16(28, 0, true);            // extra length
+      local.set(nameBytes, 30);
+      local.set(file.data, 30 + nameBytes.length);
+      localHeaders.push(local);
+
+      // Central directory entry (46 bytes + name)
+      const central = new Uint8Array(46 + nameBytes.length);
+      const cv = new DataView(central.buffer);
+      cv.setUint32(0, 0x02014b50, true);  // signature
+      cv.setUint16(4, 20, true);            // version made by
+      cv.setUint16(6, 20, true);            // version needed
+      cv.setUint16(8, 0, true);             // flags
+      cv.setUint16(10, 0, true);            // compression: store
+      cv.setUint16(12, 0, true);            // mod time
+      cv.setUint16(14, 0, true);            // mod date
+      cv.setUint32(16, crc, true);          // crc-32
+      cv.setUint32(20, file.data.length, true); // compressed size
+      cv.setUint32(24, file.data.length, true); // uncompressed size
+      cv.setUint16(28, nameBytes.length, true); // name length
+      cv.setUint16(30, 0, true);            // extra length
+      cv.setUint16(32, 0, true);            // comment length
+      cv.setUint16(34, 0, true);            // disk number
+      cv.setUint16(36, 0, true);            // internal attrs
+      cv.setUint32(38, 0, true);            // external attrs
+      cv.setUint32(42, offset, true);       // local header offset
+      central.set(nameBytes, 46);
+      centralEntries.push(central);
+
+      offset += local.length;
+    }
+
+    const centralDirOffset = offset;
+    const centralDirSize = centralEntries.reduce((s, e) => s + e.length, 0);
+
+    // End of central directory (22 bytes)
+    const eocd = new Uint8Array(22);
+    const ev = new DataView(eocd.buffer);
+    ev.setUint32(0, 0x06054b50, true);     // signature
+    ev.setUint16(4, 0, true);               // disk number
+    ev.setUint16(6, 0, true);               // central dir disk
+    ev.setUint16(8, files.length, true);     // entries on this disk
+    ev.setUint16(10, files.length, true);    // total entries
+    ev.setUint32(12, centralDirSize, true);  // central dir size
+    ev.setUint32(16, centralDirOffset, true); // central dir offset
+    ev.setUint16(20, 0, true);              // comment length
+
+    const totalSize = offset + centralDirSize + 22;
+    const result = new Uint8Array(totalSize);
+    let pos = 0;
+    for (const h of localHeaders) { result.set(h, pos); pos += h.length; }
+    for (const e of centralEntries) { result.set(e, pos); pos += e.length; }
+    result.set(eocd, pos);
+
+    return new Blob([result], { type: 'application/zip' });
+  }
+
+  // CRC-32 lookup table
+  const crcTable = (() => {
+    const table = new Uint32Array(256);
+    for (let i = 0; i < 256; i++) {
+      let c = i;
+      for (let j = 0; j < 8; j++) {
+        c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+      }
+      table[i] = c;
+    }
+    return table;
+  })();
+
+  function crc32(data) {
+    let crc = 0xFFFFFFFF;
+    for (let i = 0; i < data.length; i++) {
+      crc = crcTable[(crc ^ data[i]) & 0xFF] ^ (crc >>> 8);
+    }
+    return (crc ^ 0xFFFFFFFF) >>> 0;
+  }
+
+  return { createZip };
+})();
+
+// ── Main ────────────────────────────────────────────────────────────────────
 
 (async () => {
   const statusBar = document.getElementById('status-bar');
@@ -57,7 +165,7 @@
     return;
   }
 
-  setStatus(`Stitched: ${fullCanvas.width} × ${fullCanvas.height}px`, 30);
+  setStatus(`Stitched: ${fullCanvas.width} x ${fullCanvas.height}px`, 30);
 
   // ── Step 2: Smart Section ─────────────────────────────────────────────
 
@@ -112,11 +220,9 @@
       if (ocrResult.text) {
         extractedText = ocrResult.text;
       } else {
-        // Fall back to DOM-collected text
         extractedText = buildDOMText(pageInfo);
       }
 
-      // Append confidence info
       if (ocrResult.confidence > 0) {
         extractedText += `\n\n--- OCR Confidence: ${ocrResult.confidence.toFixed(1)}% (${ocrResult.method}) ---`;
       }
@@ -187,44 +293,63 @@
   setStatus(`Done — ${processedSections.length} section(s), total ${totalSizeMB(processedSections)} MB`, 100);
   statusBar.classList.add('done');
 
-  // Enable action buttons
   btnDownloadAll.disabled = false;
   btnCopyText.disabled = false;
   btnCopyMeta.disabled = false;
 
-  // Clean up capture data from storage (it can be large)
   chrome.storage.local.remove('lastCapture');
 
   // ── Event Handlers ────────────────────────────────────────────────────
 
-  btnDownloadAll.addEventListener('click', () => downloadAll());
+  btnDownloadAll.addEventListener('click', () => downloadAllAsZip());
   btnCopyText.addEventListener('click', () => copyToClipboard(extractedText, btnCopyText));
   btnCopyMeta.addEventListener('click', () => copyToClipboard(JSON.stringify(fullMetadata, null, 2), btnCopyMeta));
 
   // ── Render Functions ──────────────────────────────────────────────────
 
-  function renderSections(sections) {
-    sectionsGrid.innerHTML = '';
+  function renderSections(sectionList) {
+    sectionsGrid.textContent = '';
 
-    sections.forEach((s, i) => {
+    sectionList.forEach((s, i) => {
       const card = document.createElement('div');
       card.className = 'section-card';
 
       const formatLabel = s.format.split('/')[1].toUpperCase();
-      const dims = `${s.canvas.width} × ${s.canvas.height}`;
+      const dims = `${s.canvas.width} x ${s.canvas.height}`;
 
-      card.innerHTML = `
-        <div class="section-card-header">
-          <div>
-            <span class="badge">Section ${i + 1}</span>
-            <span class="size">${dims} · ${s.sizeMB} MB · ${formatLabel} @ ${Math.round(s.quality * 100)}%${s.scaled ? ` · scaled ${Math.round((s.scaleFactor || 1) * 100)}%` : ''}</span>
-          </div>
-          <div class="section-card-actions">
-            <button data-action="download" data-index="${i}">Download</button>
-            <button data-action="open" data-index="${i}">Open</button>
-          </div>
-        </div>
-      `;
+      // Build header
+      const header = document.createElement('div');
+      header.className = 'section-card-header';
+
+      const infoDiv = document.createElement('div');
+      const badge = document.createElement('span');
+      badge.className = 'badge';
+      badge.textContent = `Section ${i + 1}`;
+      const sizeSpan = document.createElement('span');
+      sizeSpan.className = 'size';
+      const scaleInfo = s.scaled ? ` · scaled ${Math.round((s.scaleFactor || 1) * 100)}%` : '';
+      sizeSpan.textContent = `${dims} · ${s.sizeMB} MB · ${formatLabel} @ ${Math.round(s.quality * 100)}%${scaleInfo}`;
+      infoDiv.appendChild(badge);
+      infoDiv.appendChild(document.createTextNode(' '));
+      infoDiv.appendChild(sizeSpan);
+
+      const actionsDiv = document.createElement('div');
+      actionsDiv.className = 'section-card-actions';
+
+      const dlBtn = document.createElement('button');
+      dlBtn.textContent = 'Download';
+      dlBtn.addEventListener('click', () => downloadSection(i));
+
+      const openBtn = document.createElement('button');
+      openBtn.textContent = 'Open';
+      openBtn.addEventListener('click', () => window.open(sectionList[i].url, '_blank'));
+
+      actionsDiv.appendChild(dlBtn);
+      actionsDiv.appendChild(openBtn);
+
+      header.appendChild(infoDiv);
+      header.appendChild(actionsDiv);
+      card.appendChild(header);
 
       const img = document.createElement('img');
       img.src = s.url;
@@ -232,56 +357,97 @@
       img.loading = 'lazy';
       card.appendChild(img);
 
-      card.querySelectorAll('button').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-          const idx = parseInt(e.target.dataset.index);
-          if (e.target.dataset.action === 'download') {
-            downloadSection(idx);
-          } else {
-            window.open(sections[idx].url, '_blank');
-          }
-        });
-      });
-
       sectionsGrid.appendChild(card);
     });
   }
 
   function renderMetadata(info) {
     const items = [
-      { label: 'URL', value: `<a href="${escapeHtml(info.url)}" target="_blank">${escapeHtml(info.url)}</a>` },
-      { label: 'Title', value: escapeHtml(info.title) },
+      { label: 'URL', value: info.url, isLink: true },
+      { label: 'Title', value: info.title },
       { label: 'Captured', value: info.capturedAt },
-      { label: 'Page Size', value: `${info.viewportWidth} × ${info.pageHeight} px` },
+      { label: 'Page Size', value: `${info.viewportWidth} x ${info.pageHeight} px` },
       { label: 'Device Pixel Ratio', value: `${info.devicePixelRatio}x` },
       { label: 'Language', value: info.documentLang },
     ];
 
-    // Add headings
+    metaGrid.textContent = '';
+
+    items.forEach(item => {
+      const el = document.createElement('div');
+      el.className = 'meta-item';
+
+      const label = document.createElement('div');
+      label.className = 'meta-label';
+      label.textContent = item.label;
+
+      const val = document.createElement('div');
+      val.className = 'meta-value';
+
+      if (item.isLink) {
+        const link = document.createElement('a');
+        link.href = item.value;
+        link.target = '_blank';
+        link.textContent = item.value;
+        val.appendChild(link);
+      } else {
+        val.textContent = item.value || '';
+      }
+
+      el.appendChild(label);
+      el.appendChild(val);
+      metaGrid.appendChild(el);
+    });
+
+    // Headings
     if (info.headings?.length > 0) {
-      const headingsHtml = info.headings.map(h =>
-        `<li class="h${h.level}">${'—'.repeat(h.level - 1)} ${escapeHtml(h.text)}</li>`
-      ).join('');
-      items.push({ label: 'Page Structure', value: `<ul class="headings-list">${headingsHtml}</ul>` });
+      const el = document.createElement('div');
+      el.className = 'meta-item';
+      const label = document.createElement('div');
+      label.className = 'meta-label';
+      label.textContent = 'Page Structure';
+      el.appendChild(label);
+
+      const list = document.createElement('ul');
+      list.className = 'headings-list';
+      info.headings.forEach(h => {
+        const li = document.createElement('li');
+        li.className = `h${h.level}`;
+        li.textContent = `${'\u2014'.repeat(h.level - 1)} ${h.text}`;
+        list.appendChild(li);
+      });
+
+      const val = document.createElement('div');
+      val.className = 'meta-value';
+      val.appendChild(list);
+      el.appendChild(val);
+      metaGrid.appendChild(el);
     }
 
-    // Add meta tags
+    // Meta tags
     if (info.metaTags) {
-      const metaEntries = Object.entries(info.metaTags).slice(0, 10);
-      if (metaEntries.length > 0) {
-        const metaHtml = metaEntries.map(([k, v]) =>
-          `<strong>${escapeHtml(k)}</strong>: ${escapeHtml(v)}`
-        ).join('<br>');
-        items.push({ label: 'Meta Tags', value: metaHtml });
+      const entries = Object.entries(info.metaTags).slice(0, 10);
+      if (entries.length > 0) {
+        const el = document.createElement('div');
+        el.className = 'meta-item';
+        const label = document.createElement('div');
+        label.className = 'meta-label';
+        label.textContent = 'Meta Tags';
+        el.appendChild(label);
+
+        const val = document.createElement('div');
+        val.className = 'meta-value';
+        entries.forEach(([k, v], idx) => {
+          const strong = document.createElement('strong');
+          strong.textContent = k;
+          val.appendChild(strong);
+          val.appendChild(document.createTextNode(`: ${v}`));
+          if (idx < entries.length - 1) val.appendChild(document.createElement('br'));
+        });
+        el.appendChild(val);
+        metaGrid.appendChild(el);
       }
     }
-
-    metaGrid.innerHTML = items.map(item => `
-      <div class="meta-item">
-        <div class="meta-label">${item.label}</div>
-        <div class="meta-value">${item.value}</div>
-      </div>
-    `).join('');
   }
 
   // ── Utility Functions ─────────────────────────────────────────────────
@@ -294,8 +460,8 @@
     }
   }
 
-  function totalSizeMB(sections) {
-    return sections.reduce((sum, s) => sum + parseFloat(s.sizeMB), 0).toFixed(2);
+  function totalSizeMB(sectionList) {
+    return sectionList.reduce((sum, s) => sum + parseFloat(s.sizeMB), 0).toFixed(2);
   }
 
   function downloadSection(index) {
@@ -305,23 +471,69 @@
     triggerDownload(section.url, name);
   }
 
-  function downloadAll() {
-    processedSections.forEach((_, i) => {
-      setTimeout(() => downloadSection(i), i * 300);
-    });
+  async function downloadAllAsZip() {
+    const btn = btnDownloadAll;
+    const origText = btn.textContent;
+    btn.textContent = 'Bundling...';
+    btn.disabled = true;
 
-    // Also download metadata JSON
-    const metaBlob = new Blob([JSON.stringify(fullMetadata, null, 2)], { type: 'application/json' });
-    const metaUrl = URL.createObjectURL(metaBlob);
-    const metaName = `gobble_${sanitizeFilename(fullMetadata.source.title)}_metadata.json`;
-    setTimeout(() => triggerDownload(metaUrl, metaName), processedSections.length * 300);
+    try {
+      const baseName = sanitizeFilename(fullMetadata.source.title);
+      const files = [];
 
-    // And OCR text
-    if (extractedText) {
-      const textBlob = new Blob([extractedText], { type: 'text/plain' });
-      const textUrl = URL.createObjectURL(textBlob);
-      const textName = `gobble_${sanitizeFilename(fullMetadata.source.title)}_ocr.txt`;
-      setTimeout(() => triggerDownload(textUrl, textName), (processedSections.length + 1) * 300);
+      // Add image sections
+      for (let i = 0; i < processedSections.length; i++) {
+        const s = processedSections[i];
+        const ext = s.format.split('/')[1];
+        const data = new Uint8Array(await s.blob.arrayBuffer());
+        files.push({ name: `section_${i + 1}.${ext}`, data });
+      }
+
+      // Add metadata JSON
+      const metaStr = JSON.stringify(fullMetadata, null, 2);
+      files.push({
+        name: 'metadata.json',
+        data: new TextEncoder().encode(metaStr),
+      });
+
+      // Add OCR text
+      if (extractedText) {
+        files.push({
+          name: 'ocr_text.txt',
+          data: new TextEncoder().encode(extractedText),
+        });
+      }
+
+      const zipBlob = ZipBuilder.createZip(files);
+      const zipUrl = URL.createObjectURL(zipBlob);
+      triggerDownload(zipUrl, `gobble_${baseName}.zip`);
+
+      btn.textContent = 'Downloaded!';
+      setTimeout(() => {
+        btn.textContent = origText;
+        btn.disabled = false;
+        URL.revokeObjectURL(zipUrl);
+      }, 2000);
+    } catch (err) {
+      console.error('ZIP creation failed:', err);
+      btn.textContent = origText;
+      btn.disabled = false;
+
+      // Fallback: download files individually
+      processedSections.forEach((_, i) => {
+        setTimeout(() => downloadSection(i), i * 300);
+      });
+
+      const metaBlob = new Blob([JSON.stringify(fullMetadata, null, 2)], { type: 'application/json' });
+      const metaUrl = URL.createObjectURL(metaBlob);
+      const title = sanitizeFilename(fullMetadata.source.title);
+      setTimeout(() => triggerDownload(metaUrl, `gobble_${title}_metadata.json`), processedSections.length * 300);
+
+      if (extractedText) {
+        const textBlob = new Blob([extractedText], { type: 'text/plain' });
+        const textUrl = URL.createObjectURL(textBlob);
+        setTimeout(() => triggerDownload(textUrl, `gobble_${title}_ocr.txt`), (processedSections.length + 1) * 300);
+      }
     }
   }
 
@@ -341,7 +553,6 @@
       btn.textContent = 'Copied!';
       setTimeout(() => { btn.textContent = orig; }, 1500);
     } catch {
-      // Fallback
       const ta = document.createElement('textarea');
       ta.value = text;
       document.body.appendChild(ta);
@@ -353,12 +564,6 @@
 
   function sanitizeFilename(str) {
     return (str || 'page').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 50);
-  }
-
-  function escapeHtml(str) {
-    const div = document.createElement('div');
-    div.textContent = str || '';
-    return div.innerHTML;
   }
 
   function buildDOMText(info) {

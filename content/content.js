@@ -257,26 +257,41 @@
     overlay.id = 'gobble-overlay';
     overlay.style.cssText = `
       position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-      background: rgba(0,0,0,0.3); z-index: 2147483647;
+      background: rgba(26, 16, 8, 0.4); z-index: 2147483647;
       display: flex; align-items: center; justify-content: center;
       font-family: -apple-system, BlinkMacSystemFont, sans-serif;
       pointer-events: none;
     `;
-    overlay.innerHTML = `
-      <div style="
-        background: #1a1a2e; color: #e0e0ff; padding: 24px 40px;
-        border-radius: 12px; font-size: 16px; text-align: center;
-        box-shadow: 0 8px 32px rgba(0,0,0,0.4);
-      ">
-        <div style="font-size: 20px; font-weight: 600; margin-bottom: 8px; color: #E8A849;">
-          Gobble gobble...
-        </div>
-        <div id="gobble-status">Measuring page...</div>
-        <div style="margin-top: 12px; width: 200px; height: 4px; background: #333; border-radius: 2px; overflow: hidden;">
-          <div id="gobble-progress" style="width: 0%; height: 100%; background: #D4762C; transition: width 0.3s;"></div>
-        </div>
-      </div>
+
+    const box = document.createElement('div');
+    box.style.cssText = `
+      background: linear-gradient(135deg, #241a0e, #1a1008);
+      color: #F5E6D0; padding: 28px 44px;
+      border-radius: 16px; font-size: 16px; text-align: center;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.5), 0 0 0 1px rgba(212,118,44,0.2);
     `;
+
+    const title = document.createElement('div');
+    title.style.cssText = 'font-size: 22px; font-weight: 800; margin-bottom: 8px; background: linear-gradient(135deg, #E8A849, #D4762C); -webkit-background-clip: text; -webkit-text-fill-color: transparent;';
+    title.textContent = 'Gobble gobble...';
+
+    const statusEl = document.createElement('div');
+    statusEl.id = 'gobble-status';
+    statusEl.style.cssText = 'color: #9C8A74; font-size: 14px;';
+    statusEl.textContent = 'Measuring page...';
+
+    const trackOuter = document.createElement('div');
+    trackOuter.style.cssText = 'margin-top: 14px; width: 220px; height: 5px; background: #2e2114; border-radius: 3px; overflow: hidden;';
+
+    const trackFill = document.createElement('div');
+    trackFill.id = 'gobble-progress';
+    trackFill.style.cssText = 'width: 0%; height: 100%; background: linear-gradient(90deg, #8B4513, #D4762C, #E8A849); border-radius: 3px; transition: width 0.3s;';
+
+    trackOuter.appendChild(trackFill);
+    box.appendChild(title);
+    box.appendChild(statusEl);
+    box.appendChild(trackOuter);
+    overlay.appendChild(box);
     document.body.appendChild(overlay);
   }
 
