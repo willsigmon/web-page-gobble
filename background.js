@@ -43,6 +43,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 async function handleStartCapture(tabId) {
   if (!tabId) return;
 
+  // Badge: show capturing state
+  chrome.action.setBadgeBackgroundColor({ color: '#D4762C' });
+  chrome.action.setBadgeText({ text: '...' });
+
   const settings = await loadSettings();
   captureState = {
     tabId,
@@ -110,12 +114,7 @@ async function handleCaptureComplete(msg, sender) {
   const { captures, settings } = captureState;
   const pageInfo = msg.pageInfo;
 
-  // Send status update
-  chrome.tabs.sendMessage(tabId, { action: 'status-update', status: 'processing' });
-
   try {
-    // Stitch captures into full-page image using offscreen document approach
-    // Since service workers can't use Canvas, we send data to viewer page
     const result = {
       captures: captures.map(c => ({
         dataUrl: c.dataUrl,
@@ -130,12 +129,23 @@ async function handleCaptureComplete(msg, sender) {
       elapsedMs: Date.now() - captureState.startTime,
     };
 
-    // Store result and open viewer
+    // Store result and open viewer in foreground
     await chrome.storage.local.set({ lastCapture: result });
-    chrome.tabs.create({ url: chrome.runtime.getURL('viewer/viewer.html') });
+    chrome.tabs.create({ url: chrome.runtime.getURL('viewer/viewer.html'), active: true });
+
+    // Tell content script we're done — triggers success overlay + fade
+    chrome.tabs.sendMessage(tabId, { action: 'capture-done' });
+
+    // Badge: brief success indicator
+    chrome.action.setBadgeBackgroundColor({ color: '#27ae60' });
+    chrome.action.setBadgeText({ text: '!' });
+    setTimeout(() => chrome.action.setBadgeText({ text: '' }), 3000);
   } catch (err) {
     console.error('Processing failed:', err);
     chrome.tabs.sendMessage(tabId, { action: 'capture-error', error: err.message });
+    chrome.action.setBadgeBackgroundColor({ color: '#C0392B' });
+    chrome.action.setBadgeText({ text: 'X' });
+    setTimeout(() => chrome.action.setBadgeText({ text: '' }), 4000);
   } finally {
     captureState = null;
   }

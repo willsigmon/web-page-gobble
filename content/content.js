@@ -35,6 +35,7 @@
       'begin-scroll-capture': () => beginCapture(msg.settings),
       'next-scroll': () => captureNextViewport(),
       'capture-error': () => cleanupCapture(msg.error),
+      'capture-done': () => showSuccessThenCleanup(),
       'status-update': () => updateOverlay(msg.status),
     };
     handlers[msg.action]?.();
@@ -120,17 +121,69 @@
   function finishCapture() {
     const pageInfo = collectPageInfo();
 
+    // Show "processing" state — don't cleanup yet, wait for background to confirm
+    showProcessingState();
+
     chrome.runtime.sendMessage({
       action: 'capture-complete',
       pageInfo,
     });
+  }
 
-    cleanup();
+  function showProcessingState() {
+    const titleEl = overlay?.querySelector('div > div:first-child');
+    const statusEl = document.getElementById('gobble-status');
+    const progressEl = document.getElementById('gobble-progress');
+    if (titleEl) titleEl.textContent = 'Processing...';
+    if (statusEl) statusEl.textContent = 'Stitching & compressing your capture';
+    if (progressEl) progressEl.style.width = '100%';
+  }
+
+  function showSuccessThenCleanup() {
+    const titleEl = overlay?.querySelector('div > div:first-child');
+    const statusEl = document.getElementById('gobble-status');
+    if (titleEl) {
+      titleEl.textContent = 'Gobbled!';
+      titleEl.style.background = 'linear-gradient(135deg, #27ae60, #2ecc71)';
+      titleEl.style.webkitBackgroundClip = 'text';
+      titleEl.style.webkitTextFillColor = 'transparent';
+    }
+    if (statusEl) statusEl.textContent = 'Opening results...';
+
+    // Restore page state immediately but keep overlay visible briefly
+    restoreFixedElements();
+    document.documentElement.style.scrollBehavior = originalScrollBehavior;
+    document.documentElement.style.overflow = '';
+    document.body.style.overflow = '';
+    window.scrollTo(0, originalScrollY);
+
+    // Fade out overlay after a beat
+    setTimeout(() => {
+      if (overlay) {
+        overlay.style.transition = 'opacity 0.4s ease';
+        overlay.style.opacity = '0';
+        setTimeout(() => removeOverlay(), 400);
+      }
+    }, 1200);
   }
 
   function cleanupCapture(error) {
-    cleanup();
-    if (error) console.error('SnapForge capture error:', error);
+    // Show error in overlay before removing
+    if (error && overlay) {
+      const titleEl = overlay.querySelector('div > div:first-child');
+      const statusEl = document.getElementById('gobble-status');
+      if (titleEl) {
+        titleEl.textContent = 'Capture failed';
+        titleEl.style.background = '#C0392B';
+        titleEl.style.webkitBackgroundClip = 'text';
+        titleEl.style.webkitTextFillColor = 'transparent';
+      }
+      if (statusEl) statusEl.textContent = error;
+      setTimeout(() => cleanup(), 2500);
+    } else {
+      cleanup();
+    }
+    if (error) console.error('Web Page Gobble capture error:', error);
   }
 
   function cleanup() {
