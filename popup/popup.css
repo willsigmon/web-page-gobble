@@ -202,6 +202,22 @@ header {
   font-weight: 600;
 }
 
+/* 1-Click Mode */
+.oneclick-group {
+  padding: 10px 12px;
+  background: #241a0e;
+  border: 1px solid #3d2e1a;
+  border-radius: 8px;
+  margin-bottom: 16px;
+}
+
+.setting-hint {
+  font-size: 11px;
+  color: #9C8A74;
+  margin-top: 6px;
+  padding-left: 24px;
+}
+
 /* Status */
 .status {
   margin-top: 14px;

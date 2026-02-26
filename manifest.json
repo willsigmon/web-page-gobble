@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
-  "name": "Web Page Gobble",
-  "version": "1.0.0",
+  "name": "PageGobbler",
+  "version": "1.2.0",
   "description": "Gobble up entire web pages — full-page screenshots with smart compression, section splitting, OCR text extraction, and page metadata. Built for AI agents.",
   "permissions": [
     "activeTab",
@@ -36,10 +36,5 @@
       "run_at": "document_idle"
     }
   ],
-  "web_accessible_resources": [
-    {
-      "resources": ["lib/tesseract-worker.js", "lib/tesseract-core.wasm.js"],
-      "matches": ["<all_urls>"]
-    }
-  ]
+  "web_accessible_resources": []
 }

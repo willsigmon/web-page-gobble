@@ -1,5 +1,5 @@
 /**
- * Web Page Gobble — Content Script
+ * PageGobbler — Content Script
  * Runs inside the target page. Handles:
  *   - Measuring full page dimensions
  *   - Scrolling through the page viewport-by-viewport
@@ -17,6 +17,52 @@
   window.__gobbleInjected = true;
 
   const SETTLE_DELAY_MS = 350; // time after scroll for repaint to finish
+  const MAX_CONSOLE_ENTRIES = 200;
+
+  // ── Console Interceptor (install early to catch everything) ───────────
+  const capturedConsole = [];
+  const originalConsole = {};
+
+  ['log', 'warn', 'error', 'info', 'debug'].forEach((method) => {
+    originalConsole[method] = console[method].bind(console);
+    console[method] = (...args) => {
+      if (capturedConsole.length < MAX_CONSOLE_ENTRIES) {
+        capturedConsole.push({
+          level: method,
+          timestamp: new Date().toISOString(),
+          message: args.map(a => {
+            try {
+              return typeof a === 'object' ? JSON.stringify(a, null, 2) : String(a);
+            } catch (_) {
+              return String(a);
+            }
+          }).join(' '),
+        });
+      }
+      originalConsole[method](...args);
+    };
+  });
+
+  // Also capture uncaught errors
+  window.addEventListener('error', (e) => {
+    if (capturedConsole.length < MAX_CONSOLE_ENTRIES) {
+      capturedConsole.push({
+        level: 'uncaught-error',
+        timestamp: new Date().toISOString(),
+        message: `${e.message} at ${e.filename}:${e.lineno}:${e.colno}`,
+      });
+    }
+  });
+
+  window.addEventListener('unhandledrejection', (e) => {
+    if (capturedConsole.length < MAX_CONSOLE_ENTRIES) {
+      capturedConsole.push({
+        level: 'unhandled-rejection',
+        timestamp: new Date().toISOString(),
+        message: String(e.reason),
+      });
+    }
+  });
 
   let scrollIndex = 0;
   let totalScrolls = 0;
@@ -26,7 +72,6 @@
   let originalScrollBehavior = '';
   let settings = {};
   let fixedElements = [];
-  let overlay = null;
 
   // ── Message Handler ─────────────────────────────────────────────────────
 
@@ -35,8 +80,7 @@
       'begin-scroll-capture': () => beginCapture(msg.settings),
       'next-scroll': () => captureNextViewport(),
       'capture-error': () => cleanupCapture(msg.error),
-      'capture-done': () => showSuccessThenCleanup(),
-      'status-update': () => updateOverlay(msg.status),
+      'capture-done': () => cleanup(),
     };
     handlers[msg.action]?.();
   });
@@ -67,7 +111,6 @@
     totalScrolls = Math.ceil(pageHeight / viewportHeight);
     scrollIndex = 0;
 
-    showOverlay();
     detectFixedElements();
 
     // Scroll to top and start
@@ -107,22 +150,18 @@
     const remaining = pageHeight - currentY;
     const clipHeight = Math.min(viewportHeight, remaining);
 
-    updateOverlay(`Capturing ${scrollIndex + 1} of ${totalScrolls}`);
-
     chrome.runtime.sendMessage({
       action: 'capture-viewport',
       scrollY: currentY,
       viewportHeight,
       clipHeight,
       index: scrollIndex,
+      totalScrolls,
     });
   }
 
   function finishCapture() {
     const pageInfo = collectPageInfo();
-
-    // Show "processing" state — don't cleanup yet, wait for background to confirm
-    showProcessingState();
 
     chrome.runtime.sendMessage({
       action: 'capture-complete',
@@ -130,69 +169,24 @@
     });
   }
 
-  function showProcessingState() {
-    const titleEl = overlay?.querySelector('div > div:first-child');
-    const statusEl = document.getElementById('gobble-status');
-    const progressEl = document.getElementById('gobble-progress');
-    if (titleEl) titleEl.textContent = 'Processing...';
-    if (statusEl) statusEl.textContent = 'Stitching & compressing your capture';
-    if (progressEl) progressEl.style.width = '100%';
-  }
-
-  function showSuccessThenCleanup() {
-    const titleEl = overlay?.querySelector('div > div:first-child');
-    const statusEl = document.getElementById('gobble-status');
-    if (titleEl) {
-      titleEl.textContent = 'Gobbled!';
-      titleEl.style.background = 'linear-gradient(135deg, #27ae60, #2ecc71)';
-      titleEl.style.webkitBackgroundClip = 'text';
-      titleEl.style.webkitTextFillColor = 'transparent';
-    }
-    if (statusEl) statusEl.textContent = 'Opening results...';
-
-    // Restore page state immediately but keep overlay visible briefly
-    restoreFixedElements();
-    document.documentElement.style.scrollBehavior = originalScrollBehavior;
-    document.documentElement.style.overflow = '';
-    document.body.style.overflow = '';
-    window.scrollTo(0, originalScrollY);
-
-    // Fade out overlay after a beat
-    setTimeout(() => {
-      if (overlay) {
-        overlay.style.transition = 'opacity 0.4s ease';
-        overlay.style.opacity = '0';
-        setTimeout(() => removeOverlay(), 400);
-      }
-    }, 1200);
-  }
-
   function cleanupCapture(error) {
-    // Show error in overlay before removing
-    if (error && overlay) {
-      const titleEl = overlay.querySelector('div > div:first-child');
-      const statusEl = document.getElementById('gobble-status');
-      if (titleEl) {
-        titleEl.textContent = 'Capture failed';
-        titleEl.style.background = '#C0392B';
-        titleEl.style.webkitBackgroundClip = 'text';
-        titleEl.style.webkitTextFillColor = 'transparent';
-      }
-      if (statusEl) statusEl.textContent = error;
-      setTimeout(() => cleanup(), 2500);
-    } else {
-      cleanup();
-    }
-    if (error) console.error('Web Page Gobble capture error:', error);
+    if (error) console.error('PageGobbler capture error:', error);
+    cleanup();
   }
 
   function cleanup() {
     restoreFixedElements();
+    restoreConsole();
     document.documentElement.style.scrollBehavior = originalScrollBehavior;
     document.documentElement.style.overflow = '';
     document.body.style.overflow = '';
     window.scrollTo(0, originalScrollY);
-    removeOverlay();
+  }
+
+  function restoreConsole() {
+    Object.entries(originalConsole).forEach(([method, fn]) => {
+      console[method] = fn;
+    });
   }
 
   // ── Page Info Collector ─────────────────────────────────────────────────
@@ -226,6 +220,18 @@
     // Collect visible text content for DOM-based text extraction
     const visibleText = extractVisibleText();
 
+    // Collect DOM structure (semantic skeleton)
+    const domStructure = extractDOMStructure();
+
+    // Collect image assets
+    const imageAssets = extractImageAssets();
+
+    // Collect structured data (JSON-LD, microdata)
+    const structuredData = extractStructuredData();
+
+    // Collect design tokens (colors, fonts)
+    const designTokens = extractDesignTokens();
+
     return {
       url: window.location.href,
       title: document.title,
@@ -240,6 +246,15 @@
       capturedAt: new Date().toISOString(),
       documentLang: document.documentElement.lang || 'unknown',
       visibleText: visibleText.slice(0, 50000), // cap at 50k chars
+      domStructure,
+      imageAssets,
+      structuredData,
+      designTokens,
+      consoleLogs: [...capturedConsole],
+      stylesheets: extractStylesheets(),
+      externalResources: extractExternalResources(),
+      forms: extractForms(),
+      allLinks: links.slice(0, 200),
     };
   }
 
@@ -275,6 +290,290 @@
     return chunks.join('\n');
   }
 
+  // ── DOM Structure Extractor ────────────────────────────────────────────
+
+  function extractDOMStructure() {
+    const SEMANTIC_TAGS = new Set([
+      'html', 'head', 'body', 'header', 'nav', 'main', 'section', 'article',
+      'aside', 'footer', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'form',
+      'table', 'ul', 'ol', 'dl', 'figure', 'details', 'dialog',
+    ]);
+
+    function walk(el, depth) {
+      if (depth > 6) return '';
+      const tag = el.tagName.toLowerCase();
+      if (!SEMANTIC_TAGS.has(tag)) {
+        // Skip non-semantic, but recurse into children
+        let childHTML = '';
+        for (const child of el.children) {
+          childHTML += walk(child, depth);
+        }
+        return childHTML;
+      }
+
+      const indent = '  '.repeat(depth);
+      const attrs = [];
+      if (el.id) attrs.push(`id="${el.id}"`);
+      if (el.className && typeof el.className === 'string') {
+        const cls = el.className.trim();
+        if (cls) attrs.push(`class="${cls.slice(0, 80)}"`);
+      }
+      if (el.getAttribute('role')) attrs.push(`role="${el.getAttribute('role')}"`);
+      if (el.getAttribute('aria-label')) attrs.push(`aria-label="${el.getAttribute('aria-label').slice(0, 60)}"`);
+
+      const attrStr = attrs.length > 0 ? ' ' + attrs.join(' ') : '';
+      let childHTML = '';
+      for (const child of el.children) {
+        childHTML += walk(child, depth + 1);
+      }
+
+      if (childHTML) {
+        return `${indent}<${tag}${attrStr}>\n${childHTML}${indent}</${tag}>\n`;
+      }
+
+      // Leaf semantic node — show truncated text content
+      const text = el.textContent.trim().slice(0, 60);
+      if (text) {
+        return `${indent}<${tag}${attrStr}>${text}</${tag}>\n`;
+      }
+      return `${indent}<${tag}${attrStr} />\n`;
+    }
+
+    return walk(document.documentElement, 0).slice(0, 30000);
+  }
+
+  // ── Image Assets Extractor ────────────────────────────────────────────
+
+  function extractImageAssets() {
+    const images = [];
+    document.querySelectorAll('img').forEach((img) => {
+      images.push({
+        src: img.src || img.dataset.src || '',
+        alt: img.alt || '',
+        width: img.naturalWidth || img.width || 0,
+        height: img.naturalHeight || img.height || 0,
+        loading: img.loading || 'eager',
+      });
+    });
+
+    // Also grab CSS background images from key elements
+    const bgImages = [];
+    document.querySelectorAll('[style*="background"], section, div, header, footer').forEach((el) => {
+      const bg = getComputedStyle(el).backgroundImage;
+      if (bg && bg !== 'none' && bg.startsWith('url(')) {
+        const url = bg.slice(4, -1).replace(/["']/g, '');
+        if (!url.startsWith('data:')) {
+          bgImages.push({ src: url, element: el.tagName.toLowerCase(), class: (el.className || '').toString().slice(0, 60) });
+        }
+      }
+    });
+
+    return { images: images.slice(0, 100), backgroundImages: bgImages.slice(0, 30) };
+  }
+
+  // ── Structured Data Extractor ─────────────────────────────────────────
+
+  function extractStructuredData() {
+    const results = [];
+
+    // JSON-LD
+    document.querySelectorAll('script[type="application/ld+json"]').forEach((script) => {
+      try {
+        const data = JSON.parse(script.textContent);
+        results.push({ type: 'json-ld', data });
+      } catch (_) { /* malformed JSON-LD */ }
+    });
+
+    // Open Graph (already in metaTags, but group them)
+    const og = {};
+    document.querySelectorAll('meta[property^="og:"]').forEach((m) => {
+      og[m.getAttribute('property')] = m.getAttribute('content');
+    });
+    if (Object.keys(og).length > 0) {
+      results.push({ type: 'open-graph', data: og });
+    }
+
+    // Twitter Cards
+    const twitter = {};
+    document.querySelectorAll('meta[name^="twitter:"]').forEach((m) => {
+      twitter[m.getAttribute('name')] = m.getAttribute('content');
+    });
+    if (Object.keys(twitter).length > 0) {
+      results.push({ type: 'twitter-card', data: twitter });
+    }
+
+    return results;
+  }
+
+  // ── Design Tokens Extractor ───────────────────────────────────────────
+
+  function extractDesignTokens() {
+    // Sample colors from key elements
+    const colorSamples = new Map();
+    const fontSamples = new Map();
+
+    const sampleElements = document.querySelectorAll(
+      'body, header, nav, main, footer, h1, h2, h3, p, a, button, .btn, [class*="hero"], [class*="cta"]'
+    );
+
+    sampleElements.forEach((el) => {
+      const style = getComputedStyle(el);
+
+      // Colors
+      const color = style.color;
+      const bg = style.backgroundColor;
+      if (color && color !== 'rgba(0, 0, 0, 0)') {
+        colorSamples.set(color, (colorSamples.get(color) || 0) + 1);
+      }
+      if (bg && bg !== 'rgba(0, 0, 0, 0)') {
+        colorSamples.set(bg, (colorSamples.get(bg) || 0) + 1);
+      }
+
+      // Fonts
+      const font = style.fontFamily;
+      const size = style.fontSize;
+      const weight = style.fontWeight;
+      const key = `${font}|${size}|${weight}`;
+      fontSamples.set(key, (fontSamples.get(key) || 0) + 1);
+    });
+
+    // Sort by frequency, take top entries
+    const colors = [...colorSamples.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 15)
+      .map(([color, count]) => ({ color, count }));
+
+    const fonts = [...fontSamples.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10)
+      .map(([key, count]) => {
+        const [family, size, weight] = key.split('|');
+        return { family, size, weight, count };
+      });
+
+    // CSS custom properties (design system tokens)
+    const customProps = {};
+    try {
+      const rootStyle = getComputedStyle(document.documentElement);
+      const sheets = document.styleSheets;
+      for (const sheet of sheets) {
+        try {
+          for (const rule of sheet.cssRules) {
+            if (rule.selectorText === ':root' || rule.selectorText === ':root, :host') {
+              for (const prop of rule.style) {
+                if (prop.startsWith('--')) {
+                  customProps[prop] = rule.style.getPropertyValue(prop).trim();
+                }
+              }
+            }
+          }
+        } catch (_) { /* cross-origin stylesheet */ }
+      }
+    } catch (_) { /* stylesheet access error */ }
+
+    return { colors, fonts, customProperties: customProps };
+  }
+
+  // ── Stylesheet Extractor ───────────────────────────────────────────────
+
+  function extractStylesheets() {
+    const sheets = [];
+
+    // Inline <style> blocks
+    document.querySelectorAll('style').forEach((style, i) => {
+      const text = style.textContent.trim();
+      if (text) {
+        sheets.push({ type: 'inline', index: i, css: text.slice(0, 50000) });
+      }
+    });
+
+    // External stylesheet rules (same-origin only)
+    for (const sheet of document.styleSheets) {
+      if (!sheet.href) continue;
+      try {
+        const rules = [];
+        for (const rule of sheet.cssRules) {
+          rules.push(rule.cssText);
+        }
+        sheets.push({ type: 'external', href: sheet.href, css: rules.join('\n').slice(0, 50000) });
+      } catch (_) {
+        // Cross-origin — just record the URL
+        sheets.push({ type: 'external', href: sheet.href, css: null, crossOrigin: true });
+      }
+    }
+
+    return sheets;
+  }
+
+  // ── External Resources Extractor ──────────────────────────────────────
+
+  function extractExternalResources() {
+    const resources = { scripts: [], stylesheets: [], fonts: [], preloads: [] };
+
+    document.querySelectorAll('script[src]').forEach((s) => {
+      resources.scripts.push({
+        src: s.src,
+        async: s.async,
+        defer: s.defer,
+        type: s.type || 'text/javascript',
+      });
+    });
+
+    document.querySelectorAll('link[rel="stylesheet"]').forEach((l) => {
+      resources.stylesheets.push({ href: l.href, media: l.media || 'all' });
+    });
+
+    document.querySelectorAll('link[rel="preconnect"], link[rel="preload"], link[rel="dns-prefetch"]').forEach((l) => {
+      resources.preloads.push({ rel: l.rel, href: l.href, as: l.getAttribute('as') || '' });
+    });
+
+    // Detect loaded fonts
+    try {
+      document.fonts.forEach((font) => {
+        resources.fonts.push({
+          family: font.family,
+          style: font.style,
+          weight: font.weight,
+          status: font.status,
+        });
+      });
+    } catch (_) { /* fonts API not available */ }
+
+    return resources;
+  }
+
+  // ── Form Extractor ────────────────────────────────────────────────────
+
+  function extractForms() {
+    const forms = [];
+    document.querySelectorAll('form').forEach((form) => {
+      const fields = [];
+      form.querySelectorAll('input, select, textarea, button').forEach((el) => {
+        const field = {
+          tag: el.tagName.toLowerCase(),
+          type: el.type || '',
+          name: el.name || '',
+          id: el.id || '',
+          placeholder: el.placeholder || '',
+          required: el.required || false,
+        };
+        if (el.tagName === 'SELECT') {
+          field.options = [...el.options].slice(0, 20).map(o => ({ value: o.value, text: o.text }));
+        }
+        fields.push(field);
+      });
+
+      forms.push({
+        action: form.action || '',
+        method: form.method || 'get',
+        id: form.id || '',
+        name: form.name || '',
+        fields,
+      });
+    });
+    return forms.slice(0, 20);
+  }
+
   // ── Fixed Element Management ────────────────────────────────────────────
 
   function detectFixedElements() {
@@ -303,62 +602,4 @@
     fixedElements = [];
   }
 
-  // ── Overlay UI ──────────────────────────────────────────────────────────
-
-  function showOverlay() {
-    overlay = document.createElement('div');
-    overlay.id = 'gobble-overlay';
-    overlay.style.cssText = `
-      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-      background: rgba(26, 16, 8, 0.4); z-index: 2147483647;
-      display: flex; align-items: center; justify-content: center;
-      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
-      pointer-events: none;
-    `;
-
-    const box = document.createElement('div');
-    box.style.cssText = `
-      background: linear-gradient(135deg, #241a0e, #1a1008);
-      color: #F5E6D0; padding: 28px 44px;
-      border-radius: 16px; font-size: 16px; text-align: center;
-      box-shadow: 0 8px 32px rgba(0,0,0,0.5), 0 0 0 1px rgba(212,118,44,0.2);
-    `;
-
-    const title = document.createElement('div');
-    title.style.cssText = 'font-size: 22px; font-weight: 800; margin-bottom: 8px; background: linear-gradient(135deg, #E8A849, #D4762C); -webkit-background-clip: text; -webkit-text-fill-color: transparent;';
-    title.textContent = 'Gobble gobble...';
-
-    const statusEl = document.createElement('div');
-    statusEl.id = 'gobble-status';
-    statusEl.style.cssText = 'color: #9C8A74; font-size: 14px;';
-    statusEl.textContent = 'Measuring page...';
-
-    const trackOuter = document.createElement('div');
-    trackOuter.style.cssText = 'margin-top: 14px; width: 220px; height: 5px; background: #2e2114; border-radius: 3px; overflow: hidden;';
-
-    const trackFill = document.createElement('div');
-    trackFill.id = 'gobble-progress';
-    trackFill.style.cssText = 'width: 0%; height: 100%; background: linear-gradient(90deg, #8B4513, #D4762C, #E8A849); border-radius: 3px; transition: width 0.3s;';
-
-    trackOuter.appendChild(trackFill);
-    box.appendChild(title);
-    box.appendChild(statusEl);
-    box.appendChild(trackOuter);
-    overlay.appendChild(box);
-    document.body.appendChild(overlay);
-  }
-
-  function updateOverlay(status) {
-    const statusEl = document.getElementById('gobble-status');
-    const progressEl = document.getElementById('gobble-progress');
-    if (statusEl) statusEl.textContent = status;
-    if (progressEl && totalScrolls > 0) {
-      progressEl.style.width = `${Math.round(((scrollIndex + 1) / totalScrolls) * 100)}%`;
-    }
-  }
-
-  function removeOverlay() {
-    overlay?.remove();
-    overlay = null;
-  }
 })();

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Web Page Gobble</title>
+  <title>PageGobbler</title>
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
@@ -36,9 +36,9 @@
           <path d="M13 25 L12 28 M13 25 L13 28.5 M13 25 L14 28" stroke="#D4762C" stroke-width="1" stroke-linecap="round"/>
           <path d="M19 25 L18 28 M19 25 L19 28.5 M19 25 L20 28" stroke="#D4762C" stroke-width="1" stroke-linecap="round"/>
         </svg>
-        <h1>Web Page Gobble</h1>
+        <h1>PageGobbler</h1>
       </div>
-      <span class="version">v1.0</span>
+      <span class="version">v1.2</span>
     </header>
 
     <button id="btn-capture" class="btn-primary">
@@ -53,6 +53,14 @@
     </div>
 
     <div class="settings-panel" id="settings-panel">
+      <div class="setting-group checkbox oneclick-group">
+        <label>
+          <input type="checkbox" id="set-oneclick">
+          1-Click Gobble
+        </label>
+        <div class="setting-hint" id="oneclick-hint">Click the turkey icon to instantly gobble — no popup.</div>
+      </div>
+
       <div class="setting-group">
         <label>Max File Size (MB)</label>
         <input type="number" id="set-max-size" min="1" max="20" step="0.5" value="3">

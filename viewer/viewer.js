@@ -1,5 +1,5 @@
 /**
- * Web Page Gobble — Viewer Page Controller
+ * PageGobbler — Viewer Page Controller
  * Processes the captured data: stitch -> compress -> section -> OCR -> display.
  */
 
@@ -138,15 +138,20 @@ const ZipBuilder = (() => {
   let fullMetadata = {};
   let extractedText = '';
 
-  // ── Load captured data ──────────────────────────────────────────────────
+  // ── Load captured data (fetch from background via messaging) ────────────
 
   setStatus('Loading capture data...', 5);
 
-  const stored = await chrome.storage.local.get('lastCapture');
-  const captureData = stored.lastCapture;
+  let captureData;
+  try {
+    const response = await chrome.runtime.sendMessage({ action: 'get-capture-data' });
+    captureData = response?.captureData;
+  } catch (err) {
+    console.error('Failed to fetch capture data:', err);
+  }
 
   if (!captureData) {
-    setStatus('No capture data found. Please capture a page first.', 0, true);
+    setStatus('No capture data found. Gobble a page first!', 0, true);
     return;
   }
 
@@ -296,8 +301,6 @@ const ZipBuilder = (() => {
   btnDownloadAll.disabled = false;
   btnCopyText.disabled = false;
   btnCopyMeta.disabled = false;
-
-  chrome.storage.local.remove('lastCapture');
 
   // ── Event Handlers ────────────────────────────────────────────────────
 
@@ -496,11 +499,92 @@ const ZipBuilder = (() => {
         data: new TextEncoder().encode(metaStr),
       });
 
-      // Add OCR text
+      // Add full page text
       if (extractedText) {
         files.push({
-          name: 'ocr_text.txt',
+          name: 'page_text.txt',
           data: new TextEncoder().encode(extractedText),
+        });
+      }
+
+      // Add DOM structure
+      if (captureData.pageInfo.domStructure) {
+        files.push({
+          name: 'dom_structure.html',
+          data: new TextEncoder().encode(captureData.pageInfo.domStructure),
+        });
+      }
+
+      // Add image assets catalog
+      if (captureData.pageInfo.imageAssets) {
+        files.push({
+          name: 'assets.json',
+          data: new TextEncoder().encode(JSON.stringify(captureData.pageInfo.imageAssets, null, 2)),
+        });
+      }
+
+      // Add structured data (JSON-LD, Open Graph, Twitter)
+      if (captureData.pageInfo.structuredData?.length > 0) {
+        files.push({
+          name: 'structured_data.json',
+          data: new TextEncoder().encode(JSON.stringify(captureData.pageInfo.structuredData, null, 2)),
+        });
+      }
+
+      // Add design tokens (colors, fonts, CSS vars)
+      if (captureData.pageInfo.designTokens) {
+        files.push({
+          name: 'design_tokens.json',
+          data: new TextEncoder().encode(JSON.stringify(captureData.pageInfo.designTokens, null, 2)),
+        });
+      }
+
+      // Add stylesheets
+      if (captureData.pageInfo.stylesheets?.length > 0) {
+        const cssFiles = captureData.pageInfo.stylesheets
+          .filter(s => s.css)
+          .map(s => s.type === 'inline' ? `/* Inline style block ${s.index} */\n${s.css}` : `/* ${s.href} */\n${s.css}`)
+          .join('\n\n');
+        if (cssFiles) {
+          files.push({
+            name: 'styles.css',
+            data: new TextEncoder().encode(cssFiles),
+          });
+        }
+      }
+
+      // Add external resources map
+      if (captureData.pageInfo.externalResources) {
+        files.push({
+          name: 'resources.json',
+          data: new TextEncoder().encode(JSON.stringify(captureData.pageInfo.externalResources, null, 2)),
+        });
+      }
+
+      // Add forms
+      if (captureData.pageInfo.forms?.length > 0) {
+        files.push({
+          name: 'forms.json',
+          data: new TextEncoder().encode(JSON.stringify(captureData.pageInfo.forms, null, 2)),
+        });
+      }
+
+      // Add full link map
+      if (captureData.pageInfo.allLinks?.length > 0) {
+        files.push({
+          name: 'links.json',
+          data: new TextEncoder().encode(JSON.stringify(captureData.pageInfo.allLinks, null, 2)),
+        });
+      }
+
+      // Add console logs
+      if (captureData.pageInfo.consoleLogs?.length > 0) {
+        const logText = captureData.pageInfo.consoleLogs
+          .map(e => `[${e.timestamp}] [${e.level.toUpperCase()}] ${e.message}`)
+          .join('\n');
+        files.push({
+          name: 'console.log',
+          data: new TextEncoder().encode(logText),
         });
       }
 
@@ -532,7 +616,7 @@ const ZipBuilder = (() => {
       if (extractedText) {
         const textBlob = new Blob([extractedText], { type: 'text/plain' });
         const textUrl = URL.createObjectURL(textBlob);
-        setTimeout(() => triggerDownload(textUrl, `gobble_${title}_ocr.txt`), (processedSections.length + 1) * 300);
+        setTimeout(() => triggerDownload(textUrl, `gobble_${title}_text.txt`), (processedSections.length + 1) * 300);
       }
     }
   }
@@ -571,20 +655,28 @@ const ZipBuilder = (() => {
     if (info.title) parts.push(`# ${info.title}\n`);
     if (info.url) parts.push(`URL: ${info.url}\n`);
 
+    if (info.metaTags?.description) {
+      parts.push(`## Description\n${info.metaTags.description}\n`);
+    }
+
     if (info.headings?.length) {
-      parts.push('\n## Page Structure\n');
+      parts.push('## Page Structure\n');
       info.headings.forEach(h => {
         parts.push(`${'#'.repeat(h.level)} ${h.text}`);
       });
+      parts.push('');
     }
 
-    if (info.metaTags?.description) {
-      parts.push(`\n## Description\n${info.metaTags.description}`);
+    // Full visible text content (the main payload for AI agents)
+    if (info.visibleText) {
+      parts.push('## Full Page Text\n');
+      parts.push(info.visibleText);
+      parts.push('');
     }
 
     if (info.topLinks?.length) {
-      parts.push('\n## Key Links\n');
-      info.topLinks.slice(0, 20).forEach(l => {
+      parts.push('## Key Links\n');
+      info.topLinks.slice(0, 30).forEach(l => {
         parts.push(`- [${l.text}](${l.href})`);
       });
     }

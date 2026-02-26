@@ -1,4 +1,4 @@
-# Web Page Gobble
+# PageGobbler
 
 A Chrome extension that gobbles up entire web pages — full-page screenshots with smart compression, section splitting, OCR text extraction, and page context metadata. Built for feeding screenshots to AI agents under file size constraints.
 
@@ -15,7 +15,7 @@ A Chrome extension that gobbles up entire web pages — full-page screenshots wi
 
 ## What It Captures
 
-For each screenshot, Web Page Gobble produces:
+For each screenshot, PageGobbler produces:
 
 | Output | Description |
 |--------|-------------|
