@@ -1,16 +1,13 @@
 {
   "manifest_version": 3,
   "name": "PageGobbler",
-  "version": "1.2.0",
-  "description": "Gobble up entire web pages — full-page screenshots with smart compression, section splitting, OCR text extraction, and page metadata. Built for AI agents.",
+  "version": "2.0.0",
+  "description": "Gobble up entire web pages — full-page screenshots with smart compression, section splitting, text extraction, and page metadata.",
   "permissions": [
     "activeTab",
     "scripting",
     "storage",
-    "downloads"
-  ],
-  "host_permissions": [
-    "<all_urls>"
+    "windows"
   ],
   "background": {
     "service_worker": "background.js",
@@ -20,21 +17,23 @@
     "default_popup": "popup/popup.html",
     "default_icon": {
       "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
       "48": "icons/icon48.png",
       "128": "icons/icon128.png"
     }
   },
   "icons": {
     "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
   },
-  "content_scripts": [
-    {
-      "matches": ["<all_urls>"],
-      "js": ["content/content.js"],
-      "run_at": "document_idle"
+  "commands": {
+    "take-screenshot": {
+      "suggested_key": {
+        "default": "Alt+Shift+G"
+      },
+      "description": "Gobble the current page"
     }
-  ],
-  "web_accessible_resources": []
+  }
 }

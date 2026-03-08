@@ -7,10 +7,9 @@
  */
 
 const DEFAULT_SETTINGS = {
-  format: 'png',          // png | jpeg | webp
   quality: 0.92,          // jpeg/webp quality
   maxFileSizeMB: 3,       // target max per-section
-  enableOCR: true,
+  enableOCR: true,        // "extract page text" toggle
   enableSections: true,
   sectionMaxHeight: 4096, // px per section slice
   compressionStrategy: 'auto', // auto | aggressive | lossless
@@ -52,20 +51,28 @@ chrome.action.onClicked.addListener((tab) => {
 // ── Message Router ──────────────────────────────────────────────────────────
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  const handlers = {
-    'start-capture': () => handleStartCapture(sender.tab?.id ?? msg.tabId),
-    'capture-viewport': () => handleCaptureViewport(msg, sender),
-    'capture-complete': () => handleCaptureComplete(msg, sender),
+  // Handlers that call sendResponse need the channel kept open (return true)
+  const asyncHandlers = {
     'get-capture-data': () => handleGetCaptureData(sendResponse),
     'get-progress': () => handleGetProgress(sendResponse),
     'get-settings': () => handleGetSettings(sendResponse),
     'save-settings': () => handleSaveSettings(msg.settings, sendResponse),
   };
 
-  const handler = handlers[msg.action];
-  if (handler) {
-    handler();
-    return true; // keep channel open for async
+  // Fire-and-forget handlers — no sendResponse needed
+  const fireHandlers = {
+    'start-capture': () => handleStartCapture(msg.tabId ?? sender.tab?.id),
+    'capture-viewport': () => handleCaptureViewport(msg, sender),
+    'capture-complete': () => handleCaptureComplete(msg, sender),
+  };
+
+  if (asyncHandlers[msg.action]) {
+    asyncHandlers[msg.action]();
+    return true;
+  }
+  if (fireHandlers[msg.action]) {
+    fireHandlers[msg.action]();
+    return false;
   }
 });
 
@@ -145,8 +152,8 @@ async function handleCaptureViewport(msg, sender) {
   try {
     lastCaptureTime = Date.now();
     const dataUrl = await chrome.tabs.captureVisibleTab(null, {
-      format: captureState.settings.format === 'webp' ? 'png' : captureState.settings.format,
-      quality: Math.round(captureState.settings.quality * 100),
+      format: 'png',
+      quality: 100,
     });
 
     captureState.captures.push({

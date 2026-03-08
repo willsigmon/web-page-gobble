@@ -1,11 +1,12 @@
 /**
  * PageGobbler — Content Script
- * Runs inside the target page. Handles:
+ * Injected on demand (not auto-injected) into the target page. Handles:
  *   - Measuring full page dimensions
  *   - Scrolling through the page viewport-by-viewport
  *   - Signaling the background to capture each viewport
  *   - Collecting page context metadata (title, URL, headings, meta)
  *   - Hiding fixed/sticky elements after first capture to avoid duplication
+ *   - Capturing console output ONLY during active capture
  *
  * IMPORTANT: Chrome enforces a hard limit of 2 captureVisibleTab calls/sec.
  * The background worker handles this, but we add a 350ms settle delay here
@@ -16,53 +17,8 @@
   if (window.__gobbleInjected) return;
   window.__gobbleInjected = true;
 
-  const SETTLE_DELAY_MS = 350; // time after scroll for repaint to finish
+  const SETTLE_DELAY_MS = 350;
   const MAX_CONSOLE_ENTRIES = 200;
-
-  // ── Console Interceptor (install early to catch everything) ───────────
-  const capturedConsole = [];
-  const originalConsole = {};
-
-  ['log', 'warn', 'error', 'info', 'debug'].forEach((method) => {
-    originalConsole[method] = console[method].bind(console);
-    console[method] = (...args) => {
-      if (capturedConsole.length < MAX_CONSOLE_ENTRIES) {
-        capturedConsole.push({
-          level: method,
-          timestamp: new Date().toISOString(),
-          message: args.map(a => {
-            try {
-              return typeof a === 'object' ? JSON.stringify(a, null, 2) : String(a);
-            } catch (_) {
-              return String(a);
-            }
-          }).join(' '),
-        });
-      }
-      originalConsole[method](...args);
-    };
-  });
-
-  // Also capture uncaught errors
-  window.addEventListener('error', (e) => {
-    if (capturedConsole.length < MAX_CONSOLE_ENTRIES) {
-      capturedConsole.push({
-        level: 'uncaught-error',
-        timestamp: new Date().toISOString(),
-        message: `${e.message} at ${e.filename}:${e.lineno}:${e.colno}`,
-      });
-    }
-  });
-
-  window.addEventListener('unhandledrejection', (e) => {
-    if (capturedConsole.length < MAX_CONSOLE_ENTRIES) {
-      capturedConsole.push({
-        level: 'unhandled-rejection',
-        timestamp: new Date().toISOString(),
-        message: String(e.reason),
-      });
-    }
-  });
 
   let scrollIndex = 0;
   let totalScrolls = 0;
@@ -72,6 +28,83 @@
   let originalScrollBehavior = '';
   let settings = {};
   let fixedElements = [];
+
+  // Console capture state — only active during capture
+  let capturedConsole = [];
+  let originalConsole = {};
+  let consoleCapturing = false;
+  let errorHandler = null;
+  let rejectionHandler = null;
+
+  // ── Console Capture (on-demand only) ─────────────────────────────────
+
+  function startConsoleCapture() {
+    if (consoleCapturing) return;
+    consoleCapturing = true;
+    capturedConsole = [];
+
+    ['log', 'warn', 'error', 'info', 'debug'].forEach((method) => {
+      originalConsole[method] = console[method].bind(console);
+      console[method] = (...args) => {
+        if (capturedConsole.length < MAX_CONSOLE_ENTRIES) {
+          capturedConsole.push({
+            level: method,
+            timestamp: new Date().toISOString(),
+            message: args.map(a => {
+              try {
+                return typeof a === 'object' ? JSON.stringify(a, null, 2) : String(a);
+              } catch (_) {
+                return String(a);
+              }
+            }).join(' '),
+          });
+        }
+        originalConsole[method](...args);
+      };
+    });
+
+    errorHandler = (e) => {
+      if (capturedConsole.length < MAX_CONSOLE_ENTRIES) {
+        capturedConsole.push({
+          level: 'uncaught-error',
+          timestamp: new Date().toISOString(),
+          message: `${e.message} at ${e.filename}:${e.lineno}:${e.colno}`,
+        });
+      }
+    };
+
+    rejectionHandler = (e) => {
+      if (capturedConsole.length < MAX_CONSOLE_ENTRIES) {
+        capturedConsole.push({
+          level: 'unhandled-rejection',
+          timestamp: new Date().toISOString(),
+          message: String(e.reason),
+        });
+      }
+    };
+
+    window.addEventListener('error', errorHandler);
+    window.addEventListener('unhandledrejection', rejectionHandler);
+  }
+
+  function stopConsoleCapture() {
+    if (!consoleCapturing) return;
+    consoleCapturing = false;
+
+    Object.entries(originalConsole).forEach(([method, fn]) => {
+      console[method] = fn;
+    });
+    originalConsole = {};
+
+    if (errorHandler) {
+      window.removeEventListener('error', errorHandler);
+      errorHandler = null;
+    }
+    if (rejectionHandler) {
+      window.removeEventListener('unhandledrejection', rejectionHandler);
+      rejectionHandler = null;
+    }
+  }
 
   // ── Message Handler ─────────────────────────────────────────────────────
 
@@ -90,6 +123,9 @@
   function beginCapture(cfg) {
     settings = cfg;
     originalScrollY = window.scrollY;
+
+    // Start capturing console output for this session
+    startConsoleCapture();
 
     // Disable smooth scrolling — we need instant jumps
     originalScrollBehavior = document.documentElement.style.scrollBehavior;
@@ -176,17 +212,11 @@
 
   function cleanup() {
     restoreFixedElements();
-    restoreConsole();
+    stopConsoleCapture();
     document.documentElement.style.scrollBehavior = originalScrollBehavior;
     document.documentElement.style.overflow = '';
     document.body.style.overflow = '';
     window.scrollTo(0, originalScrollY);
-  }
-
-  function restoreConsole() {
-    Object.entries(originalConsole).forEach(([method, fn]) => {
-      console[method] = fn;
-    });
   }
 
   // ── Page Info Collector ─────────────────────────────────────────────────
@@ -217,19 +247,10 @@
       }
     });
 
-    // Collect visible text content for DOM-based text extraction
     const visibleText = extractVisibleText();
-
-    // Collect DOM structure (semantic skeleton)
     const domStructure = extractDOMStructure();
-
-    // Collect image assets
     const imageAssets = extractImageAssets();
-
-    // Collect structured data (JSON-LD, microdata)
     const structuredData = extractStructuredData();
-
-    // Collect design tokens (colors, fonts)
     const designTokens = extractDesignTokens();
 
     return {
@@ -245,7 +266,7 @@
       topLinks: links.slice(0, 50),
       capturedAt: new Date().toISOString(),
       documentLang: document.documentElement.lang || 'unknown',
-      visibleText: visibleText.slice(0, 50000), // cap at 50k chars
+      visibleText: visibleText.slice(0, 50000),
       domStructure,
       imageAssets,
       structuredData,
@@ -303,7 +324,6 @@
       if (depth > 6) return '';
       const tag = el.tagName.toLowerCase();
       if (!SEMANTIC_TAGS.has(tag)) {
-        // Skip non-semantic, but recurse into children
         let childHTML = '';
         for (const child of el.children) {
           childHTML += walk(child, depth);
@@ -331,7 +351,6 @@
         return `${indent}<${tag}${attrStr}>\n${childHTML}${indent}</${tag}>\n`;
       }
 
-      // Leaf semantic node — show truncated text content
       const text = el.textContent.trim().slice(0, 60);
       if (text) {
         return `${indent}<${tag}${attrStr}>${text}</${tag}>\n`;
@@ -356,7 +375,6 @@
       });
     });
 
-    // Also grab CSS background images from key elements
     const bgImages = [];
     document.querySelectorAll('[style*="background"], section, div, header, footer').forEach((el) => {
       const bg = getComputedStyle(el).backgroundImage;
@@ -376,7 +394,6 @@
   function extractStructuredData() {
     const results = [];
 
-    // JSON-LD
     document.querySelectorAll('script[type="application/ld+json"]').forEach((script) => {
       try {
         const data = JSON.parse(script.textContent);
@@ -384,7 +401,6 @@
       } catch (_) { /* malformed JSON-LD */ }
     });
 
-    // Open Graph (already in metaTags, but group them)
     const og = {};
     document.querySelectorAll('meta[property^="og:"]').forEach((m) => {
       og[m.getAttribute('property')] = m.getAttribute('content');
@@ -393,7 +409,6 @@
       results.push({ type: 'open-graph', data: og });
     }
 
-    // Twitter Cards
     const twitter = {};
     document.querySelectorAll('meta[name^="twitter:"]').forEach((m) => {
       twitter[m.getAttribute('name')] = m.getAttribute('content');
@@ -408,7 +423,6 @@
   // ── Design Tokens Extractor ───────────────────────────────────────────
 
   function extractDesignTokens() {
-    // Sample colors from key elements
     const colorSamples = new Map();
     const fontSamples = new Map();
 
@@ -419,7 +433,6 @@
     sampleElements.forEach((el) => {
       const style = getComputedStyle(el);
 
-      // Colors
       const color = style.color;
       const bg = style.backgroundColor;
       if (color && color !== 'rgba(0, 0, 0, 0)') {
@@ -429,7 +442,6 @@
         colorSamples.set(bg, (colorSamples.get(bg) || 0) + 1);
       }
 
-      // Fonts
       const font = style.fontFamily;
       const size = style.fontSize;
       const weight = style.fontWeight;
@@ -437,7 +449,6 @@
       fontSamples.set(key, (fontSamples.get(key) || 0) + 1);
     });
 
-    // Sort by frequency, take top entries
     const colors = [...colorSamples.entries()]
       .sort((a, b) => b[1] - a[1])
       .slice(0, 15)
@@ -451,10 +462,8 @@
         return { family, size, weight, count };
       });
 
-    // CSS custom properties (design system tokens)
     const customProps = {};
     try {
-      const rootStyle = getComputedStyle(document.documentElement);
       const sheets = document.styleSheets;
       for (const sheet of sheets) {
         try {
@@ -479,7 +488,6 @@
   function extractStylesheets() {
     const sheets = [];
 
-    // Inline <style> blocks
     document.querySelectorAll('style').forEach((style, i) => {
       const text = style.textContent.trim();
       if (text) {
@@ -487,7 +495,6 @@
       }
     });
 
-    // External stylesheet rules (same-origin only)
     for (const sheet of document.styleSheets) {
       if (!sheet.href) continue;
       try {
@@ -497,7 +504,6 @@
         }
         sheets.push({ type: 'external', href: sheet.href, css: rules.join('\n').slice(0, 50000) });
       } catch (_) {
-        // Cross-origin — just record the URL
         sheets.push({ type: 'external', href: sheet.href, css: null, crossOrigin: true });
       }
     }
@@ -527,7 +533,6 @@
       resources.preloads.push({ rel: l.rel, href: l.href, as: l.getAttribute('as') || '' });
     });
 
-    // Detect loaded fonts
     try {
       document.fonts.forEach((font) => {
         resources.fonts.push({
@@ -578,7 +583,18 @@
 
   function detectFixedElements() {
     fixedElements = [];
-    document.querySelectorAll('*').forEach((el) => {
+    // Target likely fixed/sticky elements instead of scanning entire DOM
+    const candidates = document.querySelectorAll(
+      'header, footer, nav, aside, ' +
+      '[role="banner"], [role="navigation"], [role="toolbar"], ' +
+      '[class*="fixed"], [class*="sticky"], [class*="toolbar"], ' +
+      '[class*="header"], [class*="footer"], [class*="nav-"], [class*="navbar"], ' +
+      '[class*="cookie"], [class*="banner"], [class*="toast"], ' +
+      '[class*="chat"], [class*="widget"], [class*="float"], ' +
+      '[class*="dock"], [class*="sidebar"], [class*="overlay"], ' +
+      '[style*="position"]'
+    );
+    candidates.forEach((el) => {
       const style = getComputedStyle(el);
       if (style.position === 'fixed' || style.position === 'sticky') {
         fixedElements.push({
@@ -587,6 +603,18 @@
         });
       }
     });
+
+    // Also check direct children of body (common for fixed overlays)
+    for (const child of document.body.children) {
+      if (fixedElements.some(f => f.el === child)) continue;
+      const style = getComputedStyle(child);
+      if (style.position === 'fixed' || style.position === 'sticky') {
+        fixedElements.push({
+          el: child,
+          origVisibility: child.style.visibility,
+        });
+      }
+    }
   }
 
   function applyFixedElementHiding() {

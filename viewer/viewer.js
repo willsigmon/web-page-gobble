@@ -212,33 +212,13 @@ const ZipBuilder = (() => {
     });
   }
 
-  // ── Step 4: OCR ───────────────────────────────────────────────────────
+  // ── Step 4: Extract Page Text ────────────────────────────────────────
 
   if (settings.enableOCR) {
-    setStatus('Running OCR text extraction...', 80);
-    try {
-      const ocrResult = await OCREngine.extract(fullCanvas, {
-        useTesseract: true,
-        lang: pageInfo.documentLang === 'unknown' ? 'eng' : pageInfo.documentLang,
-      });
-
-      if (ocrResult.text) {
-        extractedText = ocrResult.text;
-      } else {
-        extractedText = buildDOMText(pageInfo);
-      }
-
-      if (ocrResult.confidence > 0) {
-        extractedText += `\n\n--- OCR Confidence: ${ocrResult.confidence.toFixed(1)}% (${ocrResult.method}) ---`;
-      }
-    } catch (err) {
-      console.warn('OCR failed:', err);
-      extractedText = buildDOMText(pageInfo);
-      extractedText += '\n\n--- OCR engine failed, text extracted from DOM ---';
-    }
-  } else {
+    setStatus('Extracting page text...', 80);
     extractedText = buildDOMText(pageInfo);
-    extractedText += '\n\n--- OCR disabled, text extracted from DOM metadata ---';
+  } else {
+    extractedText = '(Text extraction disabled in settings)';
   }
 
   ocrText.textContent = extractedText || '(No text extracted)';
@@ -282,7 +262,7 @@ const ZipBuilder = (() => {
       elapsedMs: captureData.elapsedMs,
       totalCaptures: captures.length,
       compressionStrategy: settings.compressionStrategy,
-      ocrEnabled: settings.enableOCR,
+      textExtractionEnabled: settings.enableOCR,
     },
   };
 
@@ -637,11 +617,14 @@ const ZipBuilder = (() => {
       btn.textContent = 'Copied!';
       setTimeout(() => { btn.textContent = orig; }, 1500);
     } catch {
+      // Fallback for older browsers
       const ta = document.createElement('textarea');
       ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
       document.body.appendChild(ta);
       ta.select();
-      document.execCommand('copy');
+      try { document.execCommand('copy'); } catch (_) { /* best effort */ }
       ta.remove();
     }
   }

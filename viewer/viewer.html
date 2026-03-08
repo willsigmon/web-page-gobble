@@ -30,7 +30,7 @@
       </div>
       <div class="topbar-actions">
         <button id="btn-download-all" class="btn btn-primary">Download ZIP</button>
-        <button id="btn-copy-text" class="btn btn-secondary">Copy OCR Text</button>
+        <button id="btn-copy-text" class="btn btn-secondary">Copy Page Text</button>
         <button id="btn-copy-metadata" class="btn btn-secondary">Copy Metadata</button>
       </div>
     </header>
@@ -53,11 +53,11 @@
         </div>
       </div>
 
-      <!-- Right: Metadata + OCR -->
+      <!-- Right: Metadata + Text -->
       <div class="panel panel-data">
         <div class="tabs">
           <button class="tab active" data-tab="metadata">Page Info</button>
-          <button class="tab" data-tab="ocr">OCR Text</button>
+          <button class="tab" data-tab="ocr">Page Text</button>
           <button class="tab" data-tab="json">Raw JSON</button>
         </div>
 
@@ -68,7 +68,7 @@
         </div>
 
         <div class="tab-content" id="tab-ocr">
-          <pre id="ocr-text" class="ocr-text">Waiting for OCR...</pre>
+          <pre id="ocr-text" class="ocr-text">Extracting page text...</pre>
         </div>
 
         <div class="tab-content" id="tab-json">
@@ -79,7 +79,6 @@
   </div>
 
   <script src="../lib/image-processor.js"></script>
-  <script src="../lib/ocr-engine.js"></script>
   <script src="viewer.js"></script>
 </body>
 </html>
